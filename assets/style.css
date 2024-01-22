@@ -1,0 +1,10 @@
+html { margin: 0; }
+body {
+     background-color: #e6f3d7
+}
+
+.previous-next-container {
+    align-items: center;
+    display: flex;
+    justify-content: center;
+}

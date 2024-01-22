@@ -1,0 +1,11 @@
+include ppdv/ppdv.min.js
+include ppdv/ppdv.min.js.map
+include ppdv/async-*.js
+include ppdv/async-*.js.map
+include ppdv/*-shared.js
+include ppdv/*-shared.js.map
+include ppdv/metadata.json
+include ppdv/package-info.json
+include README.md
+include LICENSE
+include package.json
