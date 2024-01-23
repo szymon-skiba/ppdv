@@ -12,12 +12,12 @@ const Ppdv = (props) => {
     const { id, sensorData } = props;
 
     const sensorPositions = {
-        'L0': { x: 110, y: 175 },   
-        'L1': { x: 40, y: 210 },   
-        'L2': { x: 75, y: 400 },   
-        'R0': { x: 190, y: 175 },  
-        'R1': { x: 260, y: 210 },  
-        'R2': { x: 225, y: 400 }, 
+        'L0': { x: 110, y: 150 },   
+        'L1': { x: 40, y: 185 },   
+        'L2': { x: 75, y: 375 },   
+        'R0': { x: 190, y: 150 },  
+        'R1': { x: 260, y: 185 },  
+        'R2': { x: 225, y: 375 }, 
     };
 
     const getColorForValue = (value) => {
@@ -37,14 +37,14 @@ const Ppdv = (props) => {
     return (
         <div id={id}>
             {/* SVG container for the feet image and pressure points */}
-            <svg width="300px" height="550px" viewBox="0 0 300 550">
+            <svg width="300px" height="500px" viewBox="0 0 300 500">
                 <defs>
                     <linearGradient id={gradientId} x1="0%" y1="100%" x2="100%" y2="100%">
-                        <stop offset="0%" style={{ stopColor: "green", stopOpacity: 1 }} />
-                        <stop offset="100%" style={{ stopColor: "red", stopOpacity: 1 }} />
+                        <stop offset="0%" style={{ stopColor: "hsl(120, 100%, 50%)", stopOpacity: 1 }} />
+                        <stop offset="100%" style={{ stopColor: "hsl(0, 100%, 50%)", stopOpacity: 1 }} />
                     </linearGradient>
                 </defs>
-                <image href={Feet} x="0" y="0" width="300px" height="500px" />
+                <image href={Feet} x="0" y="0" width="300px" height="450px" />
                 {sensorData.map((sensor) => {
                     const position = sensorPositions[sensor.name];
                     const color = getColorForValue(sensor.value);
@@ -60,9 +60,9 @@ const Ppdv = (props) => {
                         </g>
                     );
                 })}
-                <rect x="40" y="500" width="200" height="20" fill={`url(#${gradientId})`} />
-                <text x="40" y="540" fontSize="17" fill="#000">Low [0]</text>
-                <text x="250" y="540" fontSize="17" fill="#000" textAnchor="end">High [1100+]</text>
+                <rect x="40" y="430" width="200" height="20" fill={`url(#${gradientId})`} />
+                <text x="40" y="470" fontSize="17" fill="#000">Low [0]</text>
+                <text x="250" y="470" fontSize="17" fill="#000" textAnchor="end">High [1100+]</text>
             </svg>
         </div>
     );

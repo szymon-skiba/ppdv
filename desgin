@@ -1,0 +1,126 @@
+  # html.Div([
+    # # Side panel
+    #     html.Div([
+    #         # Dropdown with user icon
+    #         html.Div([
+    #             html.I(className="fas fa-user", style={'marginRight': '10px'}),
+    #             dcc.Dropdown(id='person-selector', style={'width': 'calc(100% - 30px)'})
+    #         ], style={'display': 'flex', 'alignItems': 'center', 'marginBottom': '20px'}),
+            
+    #         # Person details
+    #         html.Div(id='person-details', style={'padding': '10px', 'borderRadius': '5px'})
+    #     ], style={
+    #         'flex': '1', # Takes 1/4 of the space
+    #         # 'minWidth': '15%', # Minimum width as a percentage
+    #         # 'height': '100vh', # Full height of the viewport
+    #         'padding': '20px', 
+    #         'margin': '10px', 
+    #         'border': '1px solid #e9ecef',
+    #         'borderRadius': '5px',
+    #         'backgroundColor': '#fff', 
+    #         'boxShadow': '0 4px 8px 0 rgba(0,0,0,0.2)',
+    #     }),
+    #     # Content panels
+    #     html.Div(id='content-panels', style={
+    #         'flex': '3', # Takes 3/4 of the space
+    #         'display': 'flex',
+    #         'flexDirection': 'column', # Stacks child divs vertically
+    #         # 'height': '100vh'
+    #     }, children=[
+    #         # First row of panels
+    #         html.Div(style={
+    #             'display': 'flex',
+    #             'justifyContent': 'space-between',
+    #             'flex': '1', # Each row takes half of the height
+    #             'marginBottom': '10px' # Margin between rows
+    #         }, children=[
+    #             html.Div([            
+    #                 html.H2('Pressure Points', style={'textAlign': 'center'}),
+    #                 ppdv.Ppdv(id='feet-pressure', sensorData=[])
+    #             ], style={
+    #                 'padding': '20px', 
+    #                 'margin': '10px',
+    #                 'border': '1px solid #e9ecef', 
+    #                 'borderRadius': '5px', 
+    #                 'backgroundColor': '#fff', 
+    #                 'boxShadow': '0 4px 8px 0 rgba(0,0,0,0.2)',
+    #                 'marginRight': '5px', # Space between panels
+    #                 'flex': '0.5' # Each panel takes half of the row
+    #             }),
+    #             html.Div([
+    #                 html.H2('Pressure Points', style={'textAlign': 'center'}),
+    #             ],style={
+    #                 'padding': '20px', 
+    #                 'margin': '10px',
+    #                 'border': '1px solid #e9ecef', 
+    #                 'borderRadius': '5px', 
+    #                 'backgroundColor': '#fff', 
+    #                 'boxShadow': '0 4px 8px 0 rgba(0,0,0,0.2)',
+    #                 'marginLeft': '5px', # Space between panels
+    #                 'flex': '1' # Each panel takes half of the row
+    #             })
+    #         ]),
+    #         # Second row of panels
+    #         html.Div(style={
+    #             'display': 'flex',
+    #             'justifyContent': 'space-between',
+    #             'flex': '1' # Each row takes half of the height
+    #         }, children=[
+    #             html.Div([
+    #                 html.H3('Anomalies', style={'textAlign': 'center', 'marginBottom': '10px'}),
+    #                 dash_table.DataTable(
+    #                     id='anomalies-table',
+    #                     columns=[
+    #                         {'name': 'Timestamp', 'id': 'timestamp'},
+    #                         {'name': 'L0', 'id': 'L0'},
+    #                         {'name': 'L1', 'id': 'L1'},
+    #                         {'name': 'L2', 'id': 'L2'},
+    #                         {'name': 'R0', 'id': 'R0'},
+    #                         {'name': 'R1', 'id': 'R1'},
+    #                         {'name': 'R2', 'id': 'R2'},
+    #                     ],
+    #                     style_cell={'textAlign': 'center'},
+    #                     style_header={
+    #                         'backgroundColor': '#e6f3d7',
+    #                         'fontWeight': 'bold'
+    #                     },
+    #                     style_data_conditional=[
+    #                         {
+    #                             'if': {'row_index': 'odd'},
+    #                             'backgroundColor': 'rgb(248, 248, 248)'
+    #                         },
+    #                         {
+    #                             "if": {"state": "selected"},
+    #                             "backgroundColor": "inherit !important",
+    #                             "border": "inherit !important",
+    #                         }
+    #                     ],
+    #                     page_size=15,  # Number of rows visible per page
+    #                 ),
+    #                 ],style={
+    #                     'padding': '20px',
+    #                     'margin': '10px',
+    #                     'border': '1px solid #e9ecef',
+    #                     'borderRadius': '5px',
+    #                     'backgroundColor': '#fff',
+    #                     'boxShadow': '0 4px 8px 0 rgba(0,0,0,0.2)',
+    #                     'marginRight': '5px', # Space between panels
+    #                     'flex': '1' # Each panel takes half of the row
+    #             }),
+    #             html.Div([
+    #                     html.H3('Anomalies', style={'textAlign': 'center', 'marginBottom': '10px'}),
+    #                 ],style={
+    #                     'padding': '20px',
+    #                     'margin': '10px',
+    #                     'border': '1px solid #e9ecef',
+    #                     'borderRadius': '5px',
+    #                     'backgroundColor': '#fff',
+    #                     'boxShadow': '0 4px 8px 0 rgba(0,0,0,0.2)',
+    #                     'marginLeft': '5px', # Space between panels
+    #                     'flex': '1' # Each panel takes half of the row
+    #             })
+    #         ])
+    #     ])
+    # ], style={
+    #     'display': 'flex', # This will arrange the side panel and the content panels side by side
+    # })
