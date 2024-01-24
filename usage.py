@@ -34,21 +34,28 @@ def fetch_and_store_data():
                 response = requests.get(f'http://tesla.iem.pw.edu.pl:9080/v2/monitor/{person_id}')
                 if response.status_code == 200:
                     data = response.json()
-                    timestamp = datetime.utcnow().isoformat() 
+
+                    # Convert UTC time to Warsaw time
+                    utc_time = datetime.utcnow()
+                    warsaw_timezone = pytz.timezone('Europe/Warsaw')
+                    warsaw_time = utc_time.astimezone(warsaw_timezone)
+
+                    # Format the timestamp
+                    timestamp = warsaw_time.strftime('%Y-%m-%d %H:%M:%S')
                     data_with_timestamp = {'timestamp': timestamp, 'data': data}
 
+                    # Store data in Redis
                     redis_client.rpush(f'person_{person_id}_data_list', json.dumps(data_with_timestamp))
-                    redis_client.ltrim(f'person_{person_id}_data_list', -610, -1) 
+                    redis_client.ltrim(f'person_{person_id}_data_list', -610, -1)
 
                     if any(sensor.get('anomaly', False) for sensor in data['trace']['sensors']):
-                        # Append to a list for anomalies for the person
                         anomalies_key = f'person_{person_id}_anomalies'
                         redis_client.rpush(anomalies_key, json.dumps(data_with_timestamp))
 
             except requests.RequestException as e:
                 print(f"Error fetching data for person {person_id}: {e}")
         time.sleep(1)
-        
+
 data_fetch_thread = threading.Thread(target=fetch_and_store_data, daemon=True)
 data_fetch_thread.start()
 
@@ -92,50 +99,42 @@ for column in sensor_columns:
             'color': 'white' if color != 'hsl(120, 100%, 50%)' else 'black'
         })
 
-def get_anomalies_data(person_id):
+def get_last_3_minutes_anomalies_data(person_id):
     anomalies_key = f'person_{person_id}_anomalies'
 
-    end_time = datetime.utcnow()
-    start_time = end_time - timedelta(minutes=10)
+    warsaw_timezone = pytz.timezone('Europe/Warsaw')
+    end_time = datetime.now(warsaw_timezone)
+    start_time = end_time - timedelta(minutes=3)
+
     anomalies_records = redis_client.lrange(anomalies_key, 0, -1)
+    anomalies_list = [json.loads(record) for record in anomalies_records]
+    anomalies_df = pd.DataFrame(anomalies_list)
+    
+    if 'timestamp' not in anomalies_df:
+        return pd.DataFrame()  
+    
+    anomalies_df['timestamp'] = pd.to_datetime(anomalies_df['timestamp'], utc=True).dt.tz_convert(warsaw_timezone)
+    filtered_df = anomalies_df[(anomalies_df['timestamp'] >= start_time) & (anomalies_df['timestamp'] <= end_time)]
 
-    anomalies_data = []
-    for record in anomalies_records:
-        try:
-            anomaly = json.loads(record)
-            anomaly_time = datetime.strptime(anomaly['timestamp'], '%Y-%m-%dT%H:%M:%S.%f')
+    return filtered_df
 
-            warsaw_timezone = pytz.timezone('Europe/Warsaw')
-            warsaw_timestamp = anomaly_time.replace(tzinfo=pytz.utc).astimezone(warsaw_timezone)
-
-            if start_time <= warsaw_timestamp <= end_time:
-                anomalies_data.append({'timestamp': warsaw_timestamp.strftime('%Y-%m-%d %H:%M:%S')})
-        except Exception as e:
-            return pd.DataFrame(anomalies_data)
-
-    return pd.DataFrame(anomalies_data)
-
-def get_last_5_minutes_data(person_id):
-    end_time = datetime.utcnow()
-    start_time = end_time - timedelta(minutes=5)
+def get_last_3_minutes_data(person_id):
     sensor_data_key = f'person_{person_id}_data_list'
+        
+    warsaw_timezone = pytz.timezone('Europe/Warsaw')
+    end_time = datetime.now(warsaw_timezone)
+    start_time = end_time - timedelta(minutes=3)
+
     sensor_data_records = redis_client.lrange(sensor_data_key, 0, -1)
+    sensor_data_list = [json.loads(record) for record in sensor_data_records]
+    sensor_df = pd.DataFrame(sensor_data_list)
 
-    # Prepare DataFrame
-    data = []
-    for record in sensor_data_records:
-        record_data = json.loads(record)
-        record_time = datetime.strptime(record_data['timestamp'], '%Y-%m-%dT%H:%M:%S.%f')
-        if start_time <= record_time <= end_time:
-            sensors_data = record_data['data']['trace']['sensors']
-            for sensor in sensors_data:
-                data.append({
-                    'timestamp': record_time,
-                    'sensor': sensor['name'],
-                    'value': sensor['value']
-                })
+    sensor_df['timestamp'] = pd.to_datetime(sensor_df['timestamp'], utc=True).dt.tz_convert(warsaw_timezone)
+    filtered_df = sensor_df[(sensor_df['timestamp'] >= start_time) & (sensor_df['timestamp'] <= end_time)]
+    
+    return filtered_df
 
-    return pd.DataFrame(data)
+
 app = Dash(__name__, external_stylesheets=external_stylesheets)
 
 @app.callback(
@@ -147,25 +146,43 @@ def update_sensor_chart(n, person_id):
     if not person_id:
         return go.Figure()
 
-    df = get_last_5_minutes_data(person_id)
-    anomalies_df = get_anomalies_data(person_id)
-    # Create line chart
-    fig = px.line(df, x='timestamp', y='value', color='sensor',
+    sensor_data_df = get_last_3_minutes_data(person_id)
+    if sensor_data_df.empty:
+        return go.Figure()
+
+    # Flatten the nested JSON structure
+    exploded_records = []
+    for index, row in sensor_data_df.iterrows():
+        sensors = row['data']['trace']['sensors']
+        for sensor in sensors:
+            exploded_records.append({
+                'timestamp': row['timestamp'],
+                'sensor': sensor['name'],
+                'value': sensor['value']
+            })
+    sensor_records_df = pd.DataFrame(exploded_records)
+
+    # Fetch anomalies data
+    anomalies_df = get_last_3_minutes_anomalies_data(person_id)
+
+    # Create the line chart
+    fig = px.line(sensor_records_df, x='timestamp', y='value', color='sensor',
                   color_discrete_map={
                       'L0': '#808700', 'L1': '#d7e120', 'L2': '#f2ff00',
                       'R0': '#0017ff', 'R1': '#182183', 'R2': '#515fe9'  
                   })
-    
+
+    # Add vertical lines for anomalies
     if not anomalies_df.empty and 'timestamp' in anomalies_df.columns:
         for anomaly_time in anomalies_df['timestamp']:
             fig.add_vline(x=anomaly_time, line_width=2, line_dash="dash", line_color="red")
 
-        
+    # Update layout
     fig.update_layout(
-        title='Sensor Data Over Last 10 Minutes',
+        title='Sensor Data Over Last 3 Minutes',
         xaxis_title='Time',
         yaxis_title='Sensor Value',
-        yaxis=dict(range=[0, 1200]),
+        yaxis=dict(range=[0, max_sensor_value]), # Assuming max_sensor_value is defined globally
         legend_title='Sensor',
         template='plotly_white'
     )
@@ -217,18 +234,14 @@ def update_anomalies_table(n, person_id):
         for record in anomalies_records:
             anomaly = json.loads(record)
             sensors_data = anomaly['data']['trace']['sensors']
-            utc_timestamp = datetime.strptime(anomaly['timestamp'], '%Y-%m-%dT%H:%M:%S.%f')
-            warsaw_timezone = pytz.timezone('Europe/Warsaw')
-            warsaw_timestamp = utc_timestamp.replace(tzinfo=pytz.utc).astimezone(warsaw_timezone)
-            formatted_timestamp = warsaw_timestamp.strftime('%Y-%m-%d %H:%M:%S')
-            row = {'timestamp': formatted_timestamp}
+            row = {'timestamp': anomaly['timestamp']}
             row.update({sensor['name']: sensor['value'] for sensor in sensors_data})
             anomalies_data.append(row)
             
         # Sort by newest first
         sorted_anomalies = sorted(anomalies_data, key=lambda x: x['timestamp'], reverse=True)
         return sorted_anomalies
-    except Exception as e:
+    except Exception:
         return []  # Return an empty list if there's an error
 
 @app.callback(
@@ -239,34 +252,21 @@ def update_anomalies_table(n, person_id):
 def update_sensor_data_table(n, person_id):
     if not person_id or is_sensor_refreshing_paused:
         raise PreventUpdate
-    
-    if not person_id:
-        return []
-    
+
     try:
-        # Fetch sensor data from Redis
         sensor_data_key = f'person_{person_id}_data_list'
         sensor_data_records = redis_client.lrange(sensor_data_key, 0, -1)
-        
-        # Process each record and prepare the data for the table
-        sensor_data_list = []
-        for record in sensor_data_records:
-            sensor_data = json.loads(record)  # Parse each record from the list
-            sensors_data = sensor_data['data']['trace']['sensors']
-            utc_timestamp = datetime.strptime(sensor_data['timestamp'], '%Y-%m-%dT%H:%M:%S.%f')
-            warsaw_timezone = pytz.timezone('Europe/Warsaw')
-            warsaw_timestamp = utc_timestamp.replace(tzinfo=pytz.utc).astimezone(warsaw_timezone)
-            formatted_timestamp = warsaw_timestamp.strftime('%Y-%m-%d %H:%M:%S')
-            row = {'timestamp': formatted_timestamp}
-            row.update({sensor['name']: sensor['value'] for sensor in sensors_data})
-            sensor_data_list.append(row)
-        
-        sorted_sensor_data_list = sorted(sensor_data_list, key=lambda x: x['timestamp'], reverse=True)
-        
-        return sorted_sensor_data_list
-        
+
+        if not sensor_data_records:
+            return []
+
+        # Convert to DataFrame
+        df = pd.DataFrame([json.loads(record) for record in sensor_data_records])
+        df = df.assign(**{sensor['name']: sensor['value'] for record in df['data'] for sensor in record['trace']['sensors']})
+        return df[['timestamp'] + [sensor['name'] for sensor in df['data'][0]['trace']['sensors']]].to_dict('records')
     except Exception as e:
-        return []  
+        return []
+
 
 @app.callback(
     Output('person-details', 'children'),
@@ -377,7 +377,31 @@ app.layout = html.Div([
             
             # Person details
             html.Div(id='person-details', style={ 'borderRadius': '5px'})
-        ], style={'padding': '20px', 'margin': '10px', 'border': '1px solid #e9ecef', 'borderRadius': '5px', 'backgroundColor': '#fff', 'boxShadow': '0 4px 8px 0 rgba(0,0,0,0.2)', 'flex': '0.5'}),
+        ], style={
+            'padding': '20px',
+            'margin': '10px',
+            'border': '1px solid #e9ecef',
+            'borderRadius': '5px',
+            'backgroundColor': '#fff', 
+            'boxShadow': '0 4px 8px 0 rgba(0,0,0,0.2)', 
+            'minWidth':'342px',
+            'flex': '0.5'}),
+
+       
+        html.Div([
+            html.H3('Last 3 minutes sensor data chart', style={'textAlign': 'center', 'marginBottom': '10px'}),
+            dcc.Graph(id='sensor-chart')
+        ], style={
+            'padding': '20px',
+            'margin': '10px',
+            'border': '1px solid #e9ecef',
+            'borderRadius': '5px',
+            'backgroundColor': '#fff',
+            'boxShadow': '0 4px 8px 0 rgba(0,0,0,0.2)',
+            'flex': '1.5'
+        }),
+    ], style={'display': 'flex', 'justifyContent': 'center', 'alignItems': 'stretch'}),
+    html.Div([
         html.Div([
             html.H3('Live pressure Points', style={'textAlign': 'center'}),
             ppdv.Ppdv(id='feet-pressure', sensorData=[])
@@ -388,34 +412,13 @@ app.layout = html.Div([
             'borderRadius': '5px', 
             'backgroundColor': '#fff', 
             'boxShadow': '0 4px 8px 0 rgba(0,0,0,0.2)',
-            'flex': '1',
+            'flex': '0.5',
             'display': 'flex',
             'flexDirection': 'column',
             'alignItems': 'center'  }),    
-       
-        html.Div([
-            html.H3('Last 10 minutes sensor data chart', style={'textAlign': 'center', 'marginBottom': '10px'}),
-            dcc.Graph(id='sensor-chart')
-        ], style={
-            'padding': '20px',
-            'margin': '10px',
-            'border': '1px solid #e9ecef',
-            'borderRadius': '5px',
-            'backgroundColor': '#fff',
-            'boxShadow': '0 4px 8px 0 rgba(0,0,0,0.2)',
-            'flex': '1'
-        }),
-    ], style={'display': 'flex', 'justifyContent': 'center', 'alignItems': 'stretch'}),
-    html.Div([
-        html.Div([
-            # Whitesapce
-            html.Div([
-            ], style={'display': 'flex', 'alignItems': 'center', 'marginBottom': '20px', 'width': 'calc(100% - 30px)'}),
-            
-        ], style={'padding': '20px', 'margin': '10px', 'flex': '0.5'}),
         
         html.Div([
-            html.H3('Sensor data last 10 minutes', style={'textAlign': 'center', 'margin-bottom':'10px', 'margin-top':'5px'}),
+            html.H3('All latest data (lastest 600 records)', style={'textAlign': 'center', 'margin-bottom':'10px', 'margin-top':'5px'}),
             dash_table.DataTable(
                 id='sensors-table',
                 columns=[
@@ -427,7 +430,17 @@ app.layout = html.Div([
                     {'name': 'R1', 'id': 'R1'},
                     {'name': 'R2', 'id': 'R2'},
                 ],
-                style_cell={'textAlign': 'center'},
+                style_cell={
+                    'textAlign': 'center',
+                    'overflow': 'hidden',
+                    'textOverflow': 'ellipsis',
+                    'whiteSpace': 'normal'
+                },
+                style_cell_conditional=[
+                    {'if': {'column_id': c},
+                    'minWidth': '50px', 'width': '50px', 'maxWidth': '50px'}
+                    for c in ['L0', 'L1', 'L2', 'R0', 'R1', 'R2']
+                ],
                 style_header={
                     'backgroundColor': '#e6f3d7',
                     'fontWeight': 'bold'
@@ -440,7 +453,6 @@ app.layout = html.Div([
             html.Div(style={'flex-grow': '1'}),
             dbc.Row([
                 dbc.Col(html.Button(id='pause-sensor-button', n_clicks=0, children=[html.I(className="fas fa-pause")]), width=2, align='start', style={'position': 'absolute', 'bottom': '70px'}),
-                # dbc.Col(html.Button(id='download-sensor-data', n_clicks=0, children=[html.I(className="fas fa-download")]), width=2, align='end')
             ], style={'display':'flex', 'justify-content':'space-between'}),
         ], style={
             'padding': '20px',
@@ -449,13 +461,13 @@ app.layout = html.Div([
             'borderRadius': '5px',
             'backgroundColor': '#fff',
             'boxShadow': '0 4px 8px 0 rgba(0,0,0,0.2)',
-            'flex': '1',
+            'flex': '1.5',
             'display': 'flex', 
             'flex-direction': 'column'
         }),
        
         html.Div([
-            html.H3('Anomalies', style={'textAlign': 'center', 'margin-bottom':'10px', 'margin-top':'5px'}),
+            html.H3('Detected anomalies', style={'textAlign': 'center', 'margin-bottom':'10px', 'margin-top':'5px'}),
             dash_table.DataTable(
                 id='anomalies-table',
                 columns=[
@@ -467,7 +479,17 @@ app.layout = html.Div([
                     {'name': 'R1', 'id': 'R1'},
                     {'name': 'R2', 'id': 'R2'},
                 ],
-                style_cell={'textAlign': 'center'},
+                style_cell={
+                    'textAlign': 'center',
+                    'overflow': 'hidden',
+                    'textOverflow': 'ellipsis',
+                    'whiteSpace': 'normal'
+                },
+                style_cell_conditional=[
+                    {'if': {'column_id': c},
+                    'minWidth': '50px', 'width': '50px', 'maxWidth': '50px'}
+                    for c in ['L0', 'L1', 'L2', 'R0', 'R1', 'R2']
+                ],
                 style_header={
                     'backgroundColor': '#e6f3d7',
                     'fontWeight': 'bold'
@@ -480,7 +502,6 @@ app.layout = html.Div([
             html.Div(style={'flex-grow': '1'}),
             dbc.Row([
                 dbc.Col(html.Button(id='pause-anomalies-button', n_clicks=0, children=[html.I(className="fas fa-pause")]), width=2, align='start', style={'position': 'absolute', 'bottom': '70px'}),
-                # dbc.Col(html.Button(id='download-anomalies-data', n_clicks=0, children=[html.I(className="fas fa-download")]), width=2, align='end')
             ], style={'display':'flex', 'justify-content':'space-between'}),
         ], style={
             'padding': '20px',
@@ -489,7 +510,7 @@ app.layout = html.Div([
             'borderRadius': '5px',
             'backgroundColor': '#fff',
             'boxShadow': '0 4px 8px 0 rgba(0,0,0,0.2)',
-            'flex': '1',
+            'flex': '1.5',
             'display': 'flex', 
             'flex-direction': 'column'
         }),
