@@ -125,7 +125,7 @@ app.layout = html.Div([
 
         # Sensor chart
         html.Div([
-            html.H3('Last 3 minutes sensor data chart', style={'textAlign': 'center', 'marginBottom': '10px'}),
+            html.H3('Last 2 minutes sensor data chart', style={'textAlign': 'center', 'marginBottom': '10px'}),
             dcc.Graph(id='sensor-chart')
         ], style={
             'padding': '20px',
