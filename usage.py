@@ -1,6 +1,7 @@
+from contextlib import nullcontext
 import ppdv
 import dash
-from dash import  dcc, Dash, callback, html, Input, Output, State,ALL
+from dash import  dcc, Dash, callback, html, Input, Output, State,ALL, ctx
 import plotly.graph_objs as go
 import requests
 from dash.exceptions import PreventUpdate
@@ -35,15 +36,12 @@ def fetch_and_store_data():
                 if response.status_code == 200:
                     data = response.json()
 
-                    # Convert UTC time to Warsaw time
                     utc_time = datetime.utcnow()
                     warsaw_timezone = pytz.timezone('Europe/Warsaw')
-                    warsaw_time = utc_time.astimezone(warsaw_timezone)
-
-                    # Format the timestamp
+                    warsaw_time = utc_time.replace(tzinfo=pytz.utc).astimezone(warsaw_timezone)
                     timestamp = warsaw_time.strftime('%Y-%m-%d %H:%M:%S')
+                    
                     data_with_timestamp = {'timestamp': timestamp, 'data': data}
-
                     # Store data in Redis
                     redis_client.rpush(f'person_{person_id}_data_list', json.dumps(data_with_timestamp))
                     redis_client.ltrim(f'person_{person_id}_data_list', -610, -1)
@@ -102,35 +100,30 @@ for column in sensor_columns:
 def get_last_3_minutes_anomalies_data(person_id):
     anomalies_key = f'person_{person_id}_anomalies'
 
-    warsaw_timezone = pytz.timezone('Europe/Warsaw')
-    end_time = datetime.now(warsaw_timezone)
-    start_time = end_time - timedelta(minutes=3)
+    end_time = datetime.now(pytz.timezone('Europe/Warsaw'))
+    start_time = end_time - timedelta(minutes=2)
 
     anomalies_records = redis_client.lrange(anomalies_key, 0, -1)
     anomalies_list = [json.loads(record) for record in anomalies_records]
     anomalies_df = pd.DataFrame(anomalies_list)
     
-    if 'timestamp' not in anomalies_df:
-        return pd.DataFrame()  
-    
-    anomalies_df['timestamp'] = pd.to_datetime(anomalies_df['timestamp'], utc=True).dt.tz_convert(warsaw_timezone)
-    filtered_df = anomalies_df[(anomalies_df['timestamp'] >= start_time) & (anomalies_df['timestamp'] <= end_time)]
+    anomalies_df['timestamp'] = pd.to_datetime(anomalies_df['timestamp']).dt.tz_localize('Europe/Warsaw')
+    filtered_df = anomalies_df[(anomalies_df['timestamp'] >= start_time) ]
 
     return filtered_df
 
 def get_last_3_minutes_data(person_id):
     sensor_data_key = f'person_{person_id}_data_list'
-        
-    warsaw_timezone = pytz.timezone('Europe/Warsaw')
-    end_time = datetime.now(warsaw_timezone)
-    start_time = end_time - timedelta(minutes=3)
+
+    end_time = datetime.now(pytz.timezone('Europe/Warsaw'))
+    start_time = end_time - timedelta(minutes=2)
 
     sensor_data_records = redis_client.lrange(sensor_data_key, 0, -1)
     sensor_data_list = [json.loads(record) for record in sensor_data_records]
     sensor_df = pd.DataFrame(sensor_data_list)
 
-    sensor_df['timestamp'] = pd.to_datetime(sensor_df['timestamp'], utc=True).dt.tz_convert(warsaw_timezone)
-    filtered_df = sensor_df[(sensor_df['timestamp'] >= start_time) & (sensor_df['timestamp'] <= end_time)]
+    sensor_df['timestamp'] = pd.to_datetime(sensor_df['timestamp']).dt.tz_localize('Europe/Warsaw')
+    filtered_df = sensor_df[(sensor_df['timestamp'] >= start_time)]
     
     return filtered_df
 
@@ -165,21 +158,28 @@ def update_sensor_chart(n, person_id):
     # Fetch anomalies data
     anomalies_df = get_last_3_minutes_anomalies_data(person_id)
 
+
     # Create the line chart
     fig = px.line(sensor_records_df, x='timestamp', y='value', color='sensor',
                   color_discrete_map={
                       'L0': '#808700', 'L1': '#d7e120', 'L2': '#f2ff00',
                       'R0': '#0017ff', 'R1': '#182183', 'R2': '#515fe9'  
                   })
+    
+    fig.add_trace(go.Scatter(
+        x=[None], y=[None], mode='lines',
+        line=dict(color="red", width=2),
+        name='Anomalies'
+    ))
 
     # Add vertical lines for anomalies
     if not anomalies_df.empty and 'timestamp' in anomalies_df.columns:
         for anomaly_time in anomalies_df['timestamp']:
-            fig.add_vline(x=anomaly_time, line_width=2, line_dash="dash", line_color="red")
+            fig.add_vline(x=anomaly_time, line_width=2, line_color="red")
 
     # Update layout
     fig.update_layout(
-        title='Sensor Data Over Last 3 Minutes',
+        title='Sensor Data Over Last 2 Minutes',
         xaxis_title='Time',
         yaxis_title='Sensor Value',
         yaxis=dict(range=[0, max_sensor_value]), # Assuming max_sensor_value is defined globally
@@ -221,41 +221,17 @@ def update_anomalies_table(n, person_id):
     if not person_id or is_anomalies_refreshing_paused:
         raise PreventUpdate
     
+    
+    if not person_id:
+        return []
+    
+
     if not person_id:
         return []
     
     try:
-        # Fetch anomalies from Redis
         anomalies_key = f'person_{person_id}_anomalies'
-        anomalies_records = redis_client.lrange(anomalies_key, 0, -1)
-        
-        # Process the records and prepare the data for the table
-        anomalies_data = []
-        for record in anomalies_records:
-            anomaly = json.loads(record)
-            sensors_data = anomaly['data']['trace']['sensors']
-            row = {'timestamp': anomaly['timestamp']}
-            row.update({sensor['name']: sensor['value'] for sensor in sensors_data})
-            anomalies_data.append(row)
-            
-        # Sort by newest first
-        sorted_anomalies = sorted(anomalies_data, key=lambda x: x['timestamp'], reverse=True)
-        return sorted_anomalies
-    except Exception:
-        return []  # Return an empty list if there's an error
-
-@app.callback(
-    Output('sensors-table', 'data'),
-    [Input('interval-update', 'n_intervals'), 
-     Input('person-selector', 'value')]
-)
-def update_sensor_data_table(n, person_id):
-    if not person_id or is_sensor_refreshing_paused:
-        raise PreventUpdate
-
-    try:
-        sensor_data_key = f'person_{person_id}_data_list'
-        sensor_data_records = redis_client.lrange(sensor_data_key, 0, -1)
+        sensor_data_records = redis_client.lrange(anomalies_key, 0, -1)
 
         if not sensor_data_records:
             return []
@@ -263,10 +239,65 @@ def update_sensor_data_table(n, person_id):
         # Convert to DataFrame
         df = pd.DataFrame([json.loads(record) for record in sensor_data_records])
         df = df.assign(**{sensor['name']: sensor['value'] for record in df['data'] for sensor in record['trace']['sensors']})
-        return df[['timestamp'] + [sensor['name'] for sensor in df['data'][0]['trace']['sensors']]].to_dict('records')
+        df['timestamp'] = pd.to_datetime(df['timestamp']).dt.tz_localize('Europe/Warsaw')
+
+        # Sort by timestamp in descending order
+        df_sorted = df.sort_values(by='timestamp', ascending=False)
+
+        return df_sorted[['timestamp'] + [sensor['name'] for sensor in df['data'][0]['trace']['sensors']]].to_dict('records')
     except Exception as e:
         return []
 
+
+@app.callback(
+    Output('sensors-table', 'data'),
+    [Input('interval-update', 'n_intervals'), 
+     Input('person-selector', 'value')],
+    [State('sensors-table', 'data')],
+)
+def update_sensor_data_table(n, person_id, rows):
+    if not person_id:
+        raise PreventUpdate
+    
+    triggered_id = ctx.triggered_id 
+    if triggered_id == 'person-selector' or rows == None :
+        try:
+            sensor_data_key = f'person_{person_id}_data_list'
+            sensor_data_records = redis_client.lrange(sensor_data_key, 0, -1)
+
+            if not sensor_data_records:
+                return []
+
+            # Convert to DataFrame
+            df = pd.DataFrame([json.loads(record) for record in sensor_data_records])
+            df = df.assign(**{sensor['name']: sensor['value'] for record in df['data'] for sensor in record['trace']['sensors']})
+            df['timestamp'] = pd.to_datetime(df['timestamp']).dt.tz_localize('Europe/Warsaw')
+
+            # Sort by timestamp in descending order
+            df_sorted = df.sort_values(by='timestamp', ascending=False)
+
+            return df_sorted[['timestamp'] + [sensor['name'] for sensor in df['data'][0]['trace']['sensors']]].to_dict('records')
+        except Exception as e:
+            return []
+    else:
+        if is_sensor_refreshing_paused:
+            raise PreventUpdate
+    
+        last_record = redis_client.lrange(f'person_{person_id}_data_list', -1, -1)
+        if not last_record:
+            print(1)
+            return rows
+
+        # Deserialize the latest record
+        new_data = json.loads(last_record[0])
+        
+        new_row = {'timestamp': pd.to_datetime(new_data['timestamp']).tz_localize('Europe/Warsaw')}
+        for sensor in new_data['data']['trace']['sensors']:
+            new_row[sensor['name']] = sensor['value']
+            
+        rows.insert(0, new_row)
+
+        return rows
 
 @app.callback(
     Output('person-details', 'children'),
@@ -322,11 +353,6 @@ def display_person_details(person_id):
                 html.Div('Yes' if person_data.get('disabled', False) else 'No', style={'marginLeft': '10px'})
             ], style=detail_row_style)
         ], style=details_style)
-    
-        global is_sensor_refreshing_paused
-        global is_anomalies_refreshing_paused
-        is_sensor_refreshing_paused = False
-        is_anomalies_refreshing_paused = False
 
         return details
     else:
@@ -384,10 +410,10 @@ app.layout = html.Div([
             'borderRadius': '5px',
             'backgroundColor': '#fff', 
             'boxShadow': '0 4px 8px 0 rgba(0,0,0,0.2)', 
-            'minWidth':'342px',
-            'flex': '0.5'}),
+            'width':'350px',
+            'flex': 'none'}), # Set width to 350px and flex to none
 
-       
+        # Sensor chart
         html.Div([
             html.H3('Last 3 minutes sensor data chart', style={'textAlign': 'center', 'marginBottom': '10px'}),
             dcc.Graph(id='sensor-chart')
@@ -398,12 +424,14 @@ app.layout = html.Div([
             'borderRadius': '5px',
             'backgroundColor': '#fff',
             'boxShadow': '0 4px 8px 0 rgba(0,0,0,0.2)',
-            'flex': '1.5'
+            'flex': '1' # Adjust the flex value as needed
         }),
     ], style={'display': 'flex', 'justifyContent': 'center', 'alignItems': 'stretch'}),
+
     html.Div([
+        # Live pressure Points
         html.Div([
-            html.H3('Live pressure Points', style={'textAlign': 'center'}),
+            html.H3('Live pressure points', style={'textAlign': 'center'}),
             ppdv.Ppdv(id='feet-pressure', sensorData=[])
         ], style={
             'padding': '20px', 
@@ -412,11 +440,8 @@ app.layout = html.Div([
             'borderRadius': '5px', 
             'backgroundColor': '#fff', 
             'boxShadow': '0 4px 8px 0 rgba(0,0,0,0.2)',
-            'flex': '0.5',
-            'display': 'flex',
-            'flexDirection': 'column',
-            'alignItems': 'center'  }),    
-        
+            'width': '350px', # Set width to 350px
+            'flex': 'none'}), # Set flex to none
         html.Div([
             html.H3('All latest data (lastest 600 records)', style={'textAlign': 'center', 'margin-bottom':'10px', 'margin-top':'5px'}),
             dash_table.DataTable(
@@ -452,7 +477,7 @@ app.layout = html.Div([
             ),
             html.Div(style={'flex-grow': '1'}),
             dbc.Row([
-                dbc.Col(html.Button(id='pause-sensor-button', n_clicks=0, children=[html.I(className="fas fa-pause")]), width=2, align='start', style={'position': 'absolute', 'bottom': '70px'}),
+                dbc.Col(html.Button(id='pause-sensor-button', n_clicks=0, children=[html.I(className="fas fa-pause")]), width=2, align='start'),
             ], style={'display':'flex', 'justify-content':'space-between'}),
         ], style={
             'padding': '20px',
@@ -501,7 +526,7 @@ app.layout = html.Div([
             ),
             html.Div(style={'flex-grow': '1'}),
             dbc.Row([
-                dbc.Col(html.Button(id='pause-anomalies-button', n_clicks=0, children=[html.I(className="fas fa-pause")]), width=2, align='start', style={'position': 'absolute', 'bottom': '70px'}),
+                dbc.Col(html.Button(id='pause-anomalies-button', n_clicks=0, children=[html.I(className="fas fa-pause")]), width=2, align='start'),
             ], style={'display':'flex', 'justify-content':'space-between'}),
         ], style={
             'padding': '20px',
