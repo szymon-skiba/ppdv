@@ -14,19 +14,22 @@ import callbacks.shared_state as shared_state
 def register_callbacks(app, redis_client):
     
     def get_last_3_minutes_anomalies_data(person_id):
-        anomalies_key = f'person_{person_id}_anomalies'
+        try:
+            anomalies_key = f'person_{person_id}_anomalies'
 
-        end_time = datetime.now(pytz.timezone('Europe/Warsaw'))
-        start_time = end_time - timedelta(minutes=2)
+            end_time = datetime.now(pytz.timezone('Europe/Warsaw'))
+            start_time = end_time - timedelta(minutes=2)
 
-        anomalies_records = redis_client.lrange(anomalies_key, 0, -1)
-        anomalies_list = [json.loads(record) for record in anomalies_records]
-        anomalies_df = pd.DataFrame(anomalies_list)
-        
-        anomalies_df['timestamp'] = pd.to_datetime(anomalies_df['timestamp']).dt.tz_localize('Europe/Warsaw')
-        filtered_df = anomalies_df[(anomalies_df['timestamp'] >= start_time) ]
+            anomalies_records = redis_client.lrange(anomalies_key, 0, -1)
+            anomalies_list = [json.loads(record) for record in anomalies_records]
+            anomalies_df = pd.DataFrame(anomalies_list)
+            
+            anomalies_df['timestamp'] = pd.to_datetime(anomalies_df['timestamp']).dt.tz_localize('Europe/Warsaw')
+            filtered_df = anomalies_df[(anomalies_df['timestamp'] >= start_time) ]
 
-        return filtered_df
+            return filtered_df
+        except Exception:
+            return pd.DataFrame()
 
     def get_last_3_minutes_data(person_id):
         sensor_data_key = f'person_{person_id}_data_list'
